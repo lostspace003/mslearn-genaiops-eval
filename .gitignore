@@ -420,3 +420,7 @@ FodyWeavers.xsd
 *.msm
 *.msp
 .azure
+
+# Lab additions: local Python environment
+.venv/
+__pycache__/
