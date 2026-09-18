@@ -71,7 +71,7 @@ After creating your repository, clone it to your local machine.
 
 ### Check model availability in your region
 
-The template deploys `gpt-5-mini` on the `GlobalStandard` SKU. Model and SKU availability varies by region, so confirm your choice exists before provisioning.
+The template deploys `gpt-5.1` on the `GlobalStandard` SKU. That combination is not available in every region — in Sweden Central, the region recommended below, `gpt-5.1` is offered only as `Standard`, and `azd up` fails at the model deployment step. Confirm what your region offers before provisioning.
 
 1. Sign in and list the models offered in your region:
 
@@ -89,6 +89,24 @@ The template deploys `gpt-5-mini` on the `GlobalStandard` SKU. Model and SKU ava
     ```
 
 1. If your chosen model is unavailable in the region, edit the `aiProjectDeploymentsJson` block in `infra/main.bicep` before continuing.
+
+    For Sweden Central, replace the block with a model that is offered as `GlobalStandard`:
+
+    ```json
+    [
+      {
+        "name": "gpt-5-mini",
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-5-mini"
+        },
+        "sku": {
+          "name": "GlobalStandard",
+          "capacity": 10
+        }
+      }
+    ]
+    ```
 
     Whichever model you deploy becomes your judge model. Use that same name for `MODEL_NAME` later in this exercise.
 
@@ -308,6 +326,42 @@ The script performs all evaluation steps automatically:
 5. **Display Results** - Retrieves and shows scoring statistics
 
 This single-script approach makes it easy to run evaluations both locally during development and automatically in CI/CD pipelines.
+
+### Update the results parser
+
+The script collects per-item scores from `item.evaluator_outputs`, which the Evals API does not return. Without this change the evaluation completes, reports `Errored items: 0`, and then prints `No scores returned` even though the Microsoft Foundry portal shows scores for every item.
+
+1. Open `src/evaluators/evaluate_agent.py` and locate this block inside `retrieve_and_display_results`:
+
+    ```python
+    for item in scored_items:
+        if hasattr(item, "evaluator_outputs"):
+            for output in item.evaluator_outputs:
+                if output.name in scores and hasattr(output, "score"):
+                    scores[output.name].append(output.score)
+    ```
+
+1. Replace it with:
+
+    ```python
+    for item in scored_items:
+        # The Evals API returns one entry per evaluator in item.results, each
+        # carrying 'metric' (or 'name') and a numeric 'score'. Entries may come
+        # back as dicts or as model objects depending on SDK version.
+        for result in (getattr(item, "results", None) or []):
+            if isinstance(result, dict):
+                metric = result.get("metric") or result.get("name")
+                value = result.get("score")
+            else:
+                metric = getattr(result, "metric", None) or getattr(result, "name", None)
+                value = getattr(result, "score", None)
+            if metric in scores and value is not None:
+                scores[metric].append(float(value))
+    ```
+
+1. Save the file.
+
+    The same change applies to the GitHub Actions run later in this exercise, which executes the same script.
 
 ### Run cloud evaluation
 
@@ -816,7 +870,7 @@ The resources you provisioned continue to bill after the exercise ends. When you
 
 **Symptom**: The run finishes with `Errored items: 0`, the Foundry portal shows scores, but the script prints `No scores returned`.
 
-**Resolution**: Ensure `retrieve_and_display_results` reads scores from `item.results`, where each entry carries `metric` (or `name`) and a numeric `score`. Older copies of the script read `item.evaluator_outputs`, which the Evals API does not return.
+**Resolution**: Apply the change in **Update the results parser** above. The scores are present in the run; the script is reading an attribute the Evals API does not return.
 
 ### `MissingSubscription` from `az role assignment create`
 
